@@ -3,9 +3,16 @@
 
 [![Build Status](https://devdiv.visualstudio.com/DevDiv/_apis/build/status/Azure.Bridge-To-Kubernetes?branchName=main)](https://devdiv.visualstudio.com/DevDiv/_build/latest?definitionId=17861&branchName=main)
 
-Welcome to Bridge-To-Kubernetes! Bridge to Kubernetes extends the Kubernetes perimeter to your development computer allowing you to write, test, and debug microservice code while connected to your Kubernetes cluster with the rest of your application or services. With this workflow, there is no need for extra assets, such as a Dockerfile or Kubernetes manifests. You can simply run your code natively on your development workstation while connected to the Kubernetes cluster, allowing you to test your code changes in the context of the larger application.
+[![CodeQL](https://github.com/Azure/Bridge-To-Kubernetes/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/Azure/Bridge-To-Kubernetes/actions/workflows/codeql-analysis.yml)
 
+## The Bridge to Kubernetes team plans to no longer actively maintain the project. Over the next few months, we will transition the project to an archival state. In the meantime, the project is still available to use and download. During this period, we will also explore and recommend community projects that provide similar benefits to Bridge to Kubernetes for your future use.
 
+Welcome to Bridge-To-Kubernetes! Bridge to Kubernetes extends the Kubernetes perimeter to your development computer allowing you to write, test, and debug microservice code while connected to your Kubernetes cluster with the rest of your application or services. You can simply run your code natively on your development workstation while connected to the Kubernetes cluster, allowing you to test your code changes in the context of the larger application.
+
+## Introduction Video
+https://learn.microsoft.com/en-us/shows/open-at-microsoft/get-started-with-bridge-to-kubernetes
+
+![image002](https://github.com/Azure/Bridge-To-Kubernetes/assets/105889062/7d71f41d-dafe-4039-afb1-31600f4a793f)
 
 ## Key Features:
 

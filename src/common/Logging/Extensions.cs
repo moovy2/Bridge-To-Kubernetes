@@ -3,18 +3,16 @@
 // Licensed under the MIT license.
 // --------------------------------------------------------------------------------------------
 
+using k8s.Autorest;
+using Microsoft.AspNetCore.Http;
+using Microsoft.BridgeToKubernetes.Common.Json;
+using Microsoft.Extensions.Primitives;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.Tracing;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
-using System.Reflection;
-using Microsoft.AspNetCore.Http;
-using Microsoft.BridgeToKubernetes.Common.Json;
-using Microsoft.Extensions.Primitives;
-using Microsoft.Rest;
-using Microsoft.Rest.Azure;
 
 namespace Microsoft.BridgeToKubernetes.Common.Logging
 {
@@ -36,7 +34,7 @@ namespace Microsoft.BridgeToKubernetes.Common.Logging
 
             try
             {
-                var serializedArgs = args.Select(arg => arg.Serialize()).ToArray();
+                var serializedArgs = args.Select(arg => JsonHelpers.SerializeForLoggingPurpose(arg)).ToArray();
                 return string.Format(CultureInfo.InvariantCulture, format, serializedArgs);
             }
             catch (Exception ex)
@@ -89,42 +87,6 @@ namespace Microsoft.BridgeToKubernetes.Common.Logging
         }
 
         /// <summary>
-        /// Serialize an object to JSON. PII values are output unscrambled. Swallows serialization exceptions.
-        /// </summary>
-        /// <param name="input">Object or value to serialize</param>
-        /// <returns>String representation of <paramref name="input"/></returns>
-        public static string Serialize(this object input)
-        {
-            if (input is string inputString)
-            {
-                return inputString;
-            }
-
-            if (input is PII pii)
-            {
-                return pii.Value;
-            }
-
-            BridgeJsonSerializerSettings serializerSettings = new BridgeJsonSerializerSettings();
-            serializerSettings.MaxDepth = 2;
-            serializerSettings.ReferenceLoopHandling = BridgeReferenceLoopHandling.Ignore;
-
-            if (input is Exception ex)
-            {
-                input = RemoveUnwantedExceptionProperties(input, serializerSettings, ex);
-            }
-
-            try
-            {
-                return JsonHelpers.SerializeObject(input, serializerSettings);
-            }
-            catch (Exception)
-            {
-                return "Serialization Error";
-            }
-        }
-
-        /// <summary>
         /// Determines whether a given EventLevel meets a LoggingVerbosity's threshold.
         /// </summary>
         /// <param name="verbosity">Verbosity level to check against</param>
@@ -154,31 +116,6 @@ namespace Microsoft.BridgeToKubernetes.Common.Logging
 
             return verbosity >= minimumVerbosity;
         }
-
-        #region headersFromAzureOperationResponse
-
-        public static string GetClientRequestId(this AzureOperationResponse operationResponse)
-        {
-            IEnumerable<string> clientRequestIds = new List<string>();
-            operationResponse?.Request?.Headers?.TryGetValues(Constants.CustomHeaderNames.ClientRequestId, out clientRequestIds);
-            return clientRequestIds?.FirstOrDefault();
-        }
-
-        public static string GetClientRequestId<T>(this AzureOperationResponse<T> operationResponse)
-        {
-            IEnumerable<string> clientRequestIds = new List<string>();
-            operationResponse?.Request?.Headers?.TryGetValues(Constants.CustomHeaderNames.ClientRequestId, out clientRequestIds);
-            return clientRequestIds?.FirstOrDefault();
-        }
-
-        public static string GetCorrelationRequestId<T>(this AzureOperationResponse<T> operationResponse)
-        {
-            IEnumerable<string> correlationRequestIds = new List<string>();
-            operationResponse?.Response?.Headers?.TryGetValues(Constants.CustomHeaderNames.CorrelationRequestId, out correlationRequestIds);
-            return correlationRequestIds?.FirstOrDefault();
-        }
-
-        #endregion headersFromAzureOperationResponse
 
         #region headersFromHttpRequestMessage
 
@@ -249,30 +186,5 @@ namespace Microsoft.BridgeToKubernetes.Common.Logging
 
         #endregion headersFromHttpHeaders
 
-        /// <summary>
-        /// Removes properties from exceptions that we don't want to log.
-        /// </summary>
-        /// <remarks>
-        /// Exceptions might contain a lot of information, that is often cut off when logged and
-        /// might result in useful information not being logged, and an increase in the size of log
-        /// files unnecessarily.
-        /// </remarks>
-        private static object RemoveUnwantedExceptionProperties(object input, BridgeJsonSerializerSettings serializerSettings, Exception ex)
-        {
-            try
-            {
-                // The Targetsite.Module property can make exception size blow up.
-                // To remove it we serialize the Exception with settings that ignore TargetSite.Module and we deserialize it as a JObject that will then be logged.
-                // When touching this method please note that Exceptions can have an InnerException and possibly InnerExceptions (AggreagateException), these need to be cleaned as well.
-
-                serializerSettings.Ignores = new Dictionary<Type, HashSet<string>>();
-                serializerSettings.Ignores.Add(typeof(MethodBase), new HashSet<string> { "Module" });
-
-                var serializedException = JsonHelpers.SerializeObject(ex, serializerSettings);
-                return JsonHelpers.DeserializeObject(serializedException);
-            }
-            catch { }
-            return input;
-        }
     }
 }

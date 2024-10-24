@@ -7,6 +7,8 @@ namespace Microsoft.BridgeToKubernetes.Library.Connect.Environment
 {
     internal enum EnableFeature
     {
-        ManagedIdentity
+        ManagedIdentity,
+        Probes,
+        LifecycleHooks
     }
 }

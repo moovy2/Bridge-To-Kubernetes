@@ -14,7 +14,6 @@ using Microsoft.BridgeToKubernetes.DevHostAgent.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json.Converters;
 
 namespace Microsoft.BridgeToKubernetes.DevHostAgent
 {
@@ -38,11 +37,7 @@ namespace Microsoft.BridgeToKubernetes.DevHostAgent
                     {
                         o.JsonSerializerOptions.WriteIndented = true;
                         o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-                    })
-                    .AddNewtonsoftJson(o =>
-                    {
-                        o.SerializerSettings.Formatting = Newtonsoft.Json.Formatting.Indented;
-                        o.SerializerSettings.Converters.Add(new StringEnumConverter());
+                        o.JsonSerializerOptions.Converters.Add(new SystemTextJsonPatch.Converters.JsonPatchDocumentConverterFactory());
                     });
 
             services.AddSignalR(h =>
@@ -56,6 +51,9 @@ namespace Microsoft.BridgeToKubernetes.DevHostAgent
                     // To handle the below error in dotnet3
                     // InvalidDataException: The maximum message size of 32768B was exceeded. The message size can be configured in AddHubOptions.
                     options.MaximumReceiveMessageSize = null;
+
+                    // We want to explicit set out arguments
+                    options.DisableImplicitFromServicesParameters = true;
                 });
 
             services.AddLogging(builder =>
