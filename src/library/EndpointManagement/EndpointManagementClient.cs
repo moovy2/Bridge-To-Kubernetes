@@ -5,18 +5,17 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Autofac.Core;
 using Microsoft.BridgeToKubernetes.Common;
 using Microsoft.BridgeToKubernetes.Common.EndpointManager;
+using Microsoft.BridgeToKubernetes.Common.EndpointManager.RequestArguments;
 using Microsoft.BridgeToKubernetes.Common.Exceptions;
 using Microsoft.BridgeToKubernetes.Common.IO;
 using Microsoft.BridgeToKubernetes.Common.Json;
@@ -40,7 +39,7 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
         private readonly IEnvironmentVariables _environmentVariables;
         private readonly string _socketFilePath;
         private readonly TimeSpan _epmLaunchWaitTime = TimeSpan.FromSeconds(30);
-
+        private readonly IEndpointManagerLauncher _endpointManagerLauncher;
         public delegate EndpointManagementClient Factory(string userAgent, string correlationId);
 
         public EndpointManagementClient(
@@ -53,7 +52,8 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
             ILog log,
             IPlatform platform,
             IAssemblyMetadataProvider assemblyMetadataProvider,
-            IEnvironmentVariables environmentVariables)
+            IEnvironmentVariables environmentVariables,
+            IEndpointManagerLauncher endpointManagerLauncher)
             : base(log, operationContext)
         {
             _progress = progress;
@@ -63,27 +63,29 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
             _environmentVariables = environmentVariables;
             _socketFilePath = _fileSystem.Path.Combine(fileSystem.GetPersistedFilesDirectory(DirectoryName.PersistedFiles), EndpointManager.ProcessName, EndpointManager.SocketName);
             _socketFactory = socketFactory;
+            _endpointManagerLauncher = endpointManagerLauncher;
+
             operationContext.UserAgent = userAgent;
             operationContext.CorrelationId = correlationId + LoggingConstants.CorrelationIdSeparator + LoggingUtils.NewId();
         }
 
         public Task AddHostsFileEntryAsync(string workloadNamespace, IEnumerable<HostsFileEntry> hostsFileEntries, CancellationToken cancellationToken)
         {
-            var request = CreateRequest(EndpointManager.ApiNames.AddHostsFileEntry, (workloadNamespace, hostsFileEntries));
-            return this.InvokeEndpointManagerAsync<EndpointManagerRequest<(string, IEnumerable<HostsFileEntry>)>, EndpointManagerResult>(request, cancellationToken);
+            var request = CreateRequest(EndpointManager.ApiNames.AddHostsFileEntry, new AddHostsFileEntryArgument { WorkloadNamespace = workloadNamespace, Entries = hostsFileEntries });
+            return this.InvokeEndpointManagerAsync<EndpointManagerRequest<AddHostsFileEntryArgument>, EndpointManagerResult>(request, cancellationToken);
         }
 
         public async Task<IEnumerable<EndpointInfo>> AllocateIPAsync(IEnumerable<EndpointInfo> endpoints, CancellationToken cancellationToken)
         {
-            var request = CreateRequest(EndpointManager.ApiNames.AllocateIP, endpoints);
-            var response = await this.InvokeEndpointManagerAsync<EndpointManagerRequest<IEnumerable<EndpointInfo>>, EndpointManagerResult<IEnumerable<EndpointInfo>>>(request, cancellationToken);
+            var request = CreateRequest(EndpointManager.ApiNames.AllocateIP, new AllocateIPArgument { Endpoints = endpoints });
+            var response = await this.InvokeEndpointManagerAsync<EndpointManagerRequest<AllocateIPArgument>, EndpointManagerResult<IEnumerable<EndpointInfo>>>(request, cancellationToken);
             return response?.Value;
         }
 
         public Task FreeIPAsync(IPAddress[] ipsToCollect, CancellationToken cancellationToken)
         {
-            var request = CreateRequest(EndpointManager.ApiNames.FreeIP, ipsToCollect);
-            return this.InvokeEndpointManagerAsync<EndpointManagerRequest<IPAddress[]>, EndpointManagerResult>(request, cancellationToken);
+            var request = CreateRequest(EndpointManager.ApiNames.FreeIP, new FreeIPArgument { IPAddresses = ipsToCollect });
+            return this.InvokeEndpointManagerAsync<EndpointManagerRequest<FreeIPArgument>, EndpointManagerResult>(request, cancellationToken);
         }
 
         public async Task FreePortsAsync(IEnumerable<IElevationRequest> elevationRequests, CancellationToken cancellationToken)
@@ -96,8 +98,8 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
 
             if (processPortMappings.Any())
             {
-                var request = CreateRequest(EndpointManager.ApiNames.KillProcess, processPortMappings);
-                await this.InvokeEndpointManagerAsync<EndpointManagerRequest<IEnumerable<ProcessPortMapping>>, EndpointManagerResult>(request, cancellationToken);
+                var request = CreateRequest(EndpointManager.ApiNames.KillProcess, new KillProcessArgument { ProcessPortMappings = processPortMappings });
+                await this.InvokeEndpointManagerAsync<EndpointManagerRequest<KillProcessArgument>, EndpointManagerResult>(request, cancellationToken);
             }
 
             IEnumerable<ServicePortMapping> servicePortMappings = elevationRequests.Where(request => request.RequestType == ElevationRequestType.FreePort)
@@ -108,8 +110,8 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
 
             if (servicePortMappings.Any())
             {
-                var request = CreateRequest(EndpointManager.ApiNames.DisableService, servicePortMappings);
-                await this.InvokeEndpointManagerAsync<EndpointManagerRequest<IEnumerable<ServicePortMapping>>, EndpointManagerResult>(request, cancellationToken);
+                var request = CreateRequest(EndpointManager.ApiNames.DisableService, new DisableServiceArgument { ServicePortMappings = servicePortMappings });
+                await this.InvokeEndpointManagerAsync<EndpointManagerRequest<DisableServiceArgument>, EndpointManagerResult>(request, cancellationToken);
             }
         }
 
@@ -228,7 +230,7 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
                 CorrelationId = _operationContext.CorrelationId
             };
 
-        private EndpointManagerRequest<T> CreateRequest<T>(EndpointManager.ApiNames apiName, T argument)
+        private EndpointManagerRequest<T> CreateRequest<T>(EndpointManager.ApiNames apiName, T argument) where T : EndpointManagerRequestArgument
             => new EndpointManagerRequest<T>()
             {
                 ApiName = apiName.ToString(),
@@ -281,7 +283,7 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
                                                                                 || socketException.SocketErrorCode == SocketError.NetworkDown))
             {
                 // We expect to hit this case if the endpoint manager is not yet running.
-                _log.Info($"{EndpointManager.ProcessName} is not running: '{ex.Message}'");
+                _log.Info($"{EndpointManager.ProcessName} is not running: '{ex.Message}' and socket error code: '{socketException.SocketErrorCode}'");
             }
             catch (Exception ex) when (ex is IUserVisibleExceptionReporter)
             {
@@ -377,108 +379,13 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
                     }
                     _log.Verbose(resultMessage);
 
-                    var executableName = $"{EndpointManager.ProcessName}{(_platform.IsWindows ? ".exe" : string.Empty)}";
-                    var launcherPath = _fileSystem.Path.Combine(_fileSystem.Path.GetExecutingAssemblyDirectoryPath(), EndpointManager.DirectoryName, executableName);
-                    if (!_fileSystem.FileExists(launcherPath))
-                    {
-                        throw new InvalidOperationException($"Failed to find '{launcherPath}'.");
-                    }
-
-                    if (_platform.IsWindows)
-                    {
-                        // Since EndpointManager is started as an elevated process and when a DOTNET_ROOT env variable is set,
-                        // on windows it is not possible to pass the DOTNET_ROOT value, so using EndpointManagerLauncher to start EndpointManager.
-                        // When VSCode uses BinariesV2 strategy to download clients, DOTNET_ROOT env var is set.
-                        if (!string.IsNullOrEmpty(this._environmentVariables.DotNetRoot))
-                        {
-                            var epmLauncherPath = _fileSystem.Path.Combine(_fileSystem.Path.GetExecutingAssemblyDirectoryPath(), EndpointManager.LauncherDirectoryName, executableName);
-                            var quotedArguments = $"\"{this._environmentVariables.DotNetRoot.Trim('"')}\" \"{launcherPath}\" \"{currentUserName}\" \"{_socketFilePath}\" \"{logFileDirectory}\" \"{_operationContext.CorrelationId}\"";
-                            // Note: If the UAC prompt is declined, the process will throw a Win32Exception.
-                            Process.Start(this.GetEndpointManagerLaunchInfoWindows($"\"{epmLauncherPath}\"", quotedArguments));
-                        }
-                        else
-                        {
-                            var quotedArguments = $"\"{currentUserName}\" \"{_socketFilePath}\" \"{logFileDirectory}\" \"{_operationContext.CorrelationId}\"";
-                            // Note: If the UAC prompt is declined, the process will throw a Win32Exception.
-                            Process.Start(this.GetEndpointManagerLaunchInfoWindows($"\"{launcherPath}\"", quotedArguments));
-                        }
-
-                        await CheckEndpointManagerAliveAsync(cancellationToken);
-                        return;
-                    }
-
-                    var fileName = string.Empty;
-                    var command = string.Empty;
-                    if (_platform.IsOSX)
-                    {
-                        var quotedLaunchPathAndArguments = $"\\\\\\\"{launcherPath}\\\\\\\" \\\\\\\"{currentUserName}\\\\\\\" \\\\\\\"{_socketFilePath}\\\\\\\" \\\\\\\"{logFileDirectory}\\\\\\\" \\\\\\\"{_operationContext.CorrelationId}\\\\\\\"";
-
-                        // We launch the EPM using AppleScript when on OSX.
-                        fileName = "/usr/bin/osascript";
-
-                        // Tell the shell to redirect output so that this process exits and the EPM continues to run in the background
-                        // For more info: https://developer.apple.com/library/archive/technotes/tn2065/_index.html#//apple_ref/doc/uid/DTS10003093-CH1-TNTAG5-I_WANT_TO_START_A_BACKGROUND_SERVER_PROCESS__HOW_DO_I_MAKE_DO_SHELL_SCRIPT_NOT_WAIT_UNTIL_THE_COMMAND_COMPLETES_
-                        StringBuilder commandBuilder = new StringBuilder();
-                        commandBuilder.Append("-e \"do shell script ");
-                        commandBuilder.Append($"\\\"{quotedLaunchPathAndArguments} &> /dev/null &\\\"");
-                        commandBuilder.Append($" with prompt \\\"{Product.Name} wants to launch {EndpointManager.ProcessName}.\\\" with administrator privileges\"");
-                        command = commandBuilder.ToString();
-
-                        _log.Info($"Launch {EndpointManager.ProcessName}: {fileName} {command}");
-                    }
-                    else
-                    {
-                        var quotedLaunchPathAndArguments = $"\\\"{launcherPath}\\\" \\\"{currentUserName}\\\" \\\"{_socketFilePath}\\\" \\\"{logFileDirectory}\\\" \\\"{_operationContext.CorrelationId}\\\"";
-
-                        // Try to use pkexec to show a GUI prompt for the user's password so we can run EndpointManager as root.
-                        // If we are already running as root, then pkexec will not show a prompt.
-                        // When running in Codespaces the user is setup to run sudo without needing to enter password.
-                        fileName = _environmentVariables.IsCodespaces ? "sudo" : "pkexec";
-                        command = $"env HOME=\"{_fileSystem.HomeDirectoryPath}\" bash -c \"{quotedLaunchPathAndArguments} &> /dev/null &\"";
-                        _log.Info($"Launch {EndpointManager.ProcessName}: {fileName} {command}");
-                    }
-
-                    Dictionary<string, string> envVars = null;
-                    if (!string.IsNullOrEmpty(_environmentVariables.DotNetRoot))
-                    {
-                        _log.Info("Setting the '{0}' environment variable with '{1}' while launching '{2}'.", EnvironmentVariables.Names.DotNetRoot, _environmentVariables.DotNetRoot, EndpointManager.ProcessName);
-                        envVars = new Dictionary<string, string>() { { EnvironmentVariables.Names.DotNetRoot, _environmentVariables.DotNetRoot } };
-                    }
-
-                    var launchExitCode = _platform.Execute(executable: fileName,
-                                                command: command,
-                                                logCallback: (line) => _log.Info($"Launch output: {line}"),
-                                                envVariables: envVars,
-                                                timeout: TimeSpan.FromSeconds(120),
-                                                cancellationToken: cancellationToken,
-                                                out string outPut);
-
-                    // Wait until user has entered their credentials to start pinging
-                    if (launchExitCode == 0)
-                    {
-                        await CheckEndpointManagerAliveAsync(cancellationToken);
-                        return;
-                    }
-                    if ((_platform.IsOSX && launchExitCode == 1) || (_platform.IsLinux && launchExitCode == 126))
-                    {
-                        // User cancellation
-                        throw new InvalidUsageException(_log.OperationContext, Resources.LaunchProcessCancelled, EndpointManager.ProcessName);
-                    }
-
-                    // Something went wrong.
-                    throw new InvalidOperationException($"{EndpointManager.ProcessName} exited with exit code {launchExitCode}");
+                    _endpointManagerLauncher.LaunchEndpointManager(currentUserName, _socketFilePath, logFileDirectory, cancellationToken);
+                    await CheckEndpointManagerAliveAsync(cancellationToken);
                 }
                 catch (Exception ex) when (ex is IUserVisibleExceptionReporter)
                 {
                     // Always bubble up UserVisible exceptions
                     throw;
-                }
-                catch (Exception ex) when (ex is Win32Exception)
-                {
-                    // This catch block will be hit if the user declines the UAC prompt on Windows.
-                    // However, since potential other Win32Exceptions could arise, we log the exception as a warning.
-                    _log.ExceptionAsWarning(ex);
-                    throw new InvalidUsageException(_log.OperationContext, ex, Resources.LaunchProcessCancelled, EndpointManager.ProcessName);
                 }
                 catch (Exception ex)
                 {
@@ -508,22 +415,6 @@ namespace Microsoft.BridgeToKubernetes.Library.EndpointManagement
             }
 
             throw new InvalidOperationException(string.Format(Resources.FailedToLaunchEndpointManagerFormat, EndpointManager.ProcessName));
-        }
-
-        private ProcessStartInfo GetEndpointManagerLaunchInfoWindows(string launcherPath, string quotedArguments)
-        {
-            this._log.Trace(EventLevel.Informational, $"Launcher path: {launcherPath} quotedArguments: {quotedArguments}");
-            // Start launcher as admin
-            ProcessStartInfo psi = new ProcessStartInfo()
-            {
-                FileName = launcherPath,
-                Arguments = quotedArguments,
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                Verb = "runas"
-            };
-
-            return psi;
         }
 
         /// <summary>

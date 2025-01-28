@@ -18,6 +18,7 @@ using k8s.Models;
 using Microsoft.BridgeToKubernetes.Common;
 using Microsoft.BridgeToKubernetes.Common.DevHostAgent;
 using Microsoft.BridgeToKubernetes.Common.IO;
+using Microsoft.BridgeToKubernetes.Common.Json;
 using Microsoft.BridgeToKubernetes.Common.Kubernetes;
 using Microsoft.BridgeToKubernetes.Common.Logging;
 using Microsoft.BridgeToKubernetes.Common.Models;
@@ -72,6 +73,30 @@ namespace Microsoft.BridgeToKubernetes.DevHostAgent.RestorationJob.Tests
             // Does RestorationJobApp contain all the necessary overloads for all patch types?
             // Look for all method calls that cast to (dynamic).
             Assert.Equal(knownPatchTypes, allPatchTypes);
+        }
+
+        [Fact]
+        public void EnsureCanDeserializePatch1()
+        {
+            string patchStateJson = File.ReadAllText(Path.Combine("TestData", "DeploymentPatch.json"));
+            var deploymentPatch = JsonHelpers.DeserializeObject<DeploymentPatch>(patchStateJson);
+
+            string name = deploymentPatch.Deployment.Name();
+            string ns = deploymentPatch.Deployment.Namespace();
+
+            Assert.Equal("bikes", name);
+            Assert.Equal("dev", ns);
+        }
+
+        [Fact]
+        public void EnsureCanDeserializePatchType()
+        {
+            string patchStateJson = File.ReadAllText(Path.Combine("TestData", "DeploymentPatch.json"));
+
+            var propertyName = typeof(PatchEntityBase).GetJsonPropertyName(nameof(PatchEntityBase.Type));
+            string type = JsonPropertyHelpers.ParseAndGetProperty<string>(patchStateJson, propertyName);
+
+            Assert.Equal(nameof(DeploymentPatch), type);
         }
 
         [Fact]
@@ -170,6 +195,54 @@ namespace Microsoft.BridgeToKubernetes.DevHostAgent.RestorationJob.Tests
             A.CallTo(_fakeDelegatingHandler).MustHaveHappened(4, Times.Exactly);
             A.CallTo(() => _autoFake.Resolve<IRemoteRestoreJobCleaner>().CleanupRemoteRestoreJobByInstanceLabelAsync(A<string>._, A<string>._, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
             method.Invoke(this, new object[] { false });
+        }
+
+        [Fact]
+        public void EnsureRestoresIflastPingWithSessionsIsNullAndRestoreTimeExceeded()
+        {
+            // restore time is set to zero seconds while initializing this test class file.
+            string patchStateJson = File.ReadAllText(Path.Combine("TestData", "DeploymentPatch.json"));
+            A.CallTo(() => _autoFake.Resolve<IFileSystem>().ReadAllTextFromFile(DevHostConstants.DevHostRestorationJob.PatchStateFullPath, A<int>._)).Returns(patchStateJson);
+            this.DeploymentPatch_Helper(true);
+
+            this.ConfigureHttpCall(GetSuccessPingResult(0)).NumberOfTimes(1);
+
+            int exitCode = _app.Execute(Array.Empty<string>(), default(CancellationToken));
+            Assert.Equal(0, exitCode);
+            A.CallTo(_fakeDelegatingHandler).MustHaveHappenedOnceExactly();
+            A.CallTo(() => _autoFake.Resolve<IRemoteRestoreJobCleaner>().CleanupRemoteRestoreJobByInstanceLabelAsync(A<string>._, A<string>._, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
+        }
+        [Fact]
+        public void EnsureNoRestoreIfRestoreTimeIsNotExceeded()
+        {
+            // restore time is set to 1 minute
+            A.CallTo(() => _env.RestoreTimeout).Returns(TimeSpan.FromMinutes(1));
+            string patchStateJson = File.ReadAllText(Path.Combine("TestData", "DeploymentPatch.json"));
+            A.CallTo(() => _autoFake.Resolve<IFileSystem>().ReadAllTextFromFile(DevHostConstants.DevHostRestorationJob.PatchStateFullPath, A<int>._)).Returns(patchStateJson);
+            this.DeploymentPatch_Helper(true);
+
+            this.ConfigureHttpCall(GetSuccessPingResult(0)).NumberOfTimes(1);
+
+            int exitCode = _app.Execute(Array.Empty<string>(), default(CancellationToken));
+            Assert.Equal(1, exitCode);
+            A.CallTo(_fakeDelegatingHandler).MustHaveHappenedTwiceExactly();
+            A.CallTo(() => _autoFake.Resolve<IRemoteRestoreJobCleaner>().CleanupRemoteRestoreJobByInstanceLabelAsync(A<string>._, A<string>._, A<CancellationToken>._)).MustNotHaveHappened();
+        }
+
+        [Fact]
+        public void EnsureNoRestoreIflastPingWithSessionsIsNotNull()
+        {
+            string patchStateJson = File.ReadAllText(Path.Combine("TestData", "DeploymentPatch.json"));
+            A.CallTo(() => _autoFake.Resolve<IFileSystem>().ReadAllTextFromFile(DevHostConstants.DevHostRestorationJob.PatchStateFullPath, A<int>._)).Returns(patchStateJson);
+            this.DeploymentPatch_Helper(true);
+
+            this.ConfigureHttpCall(GetSuccessPingResult(3))
+                .NumberOfTimes(1);
+
+            int exitCode = _app.Execute(Array.Empty<string>(), default(CancellationToken));
+            Assert.Equal(1, exitCode);
+            A.CallTo(_fakeDelegatingHandler).MustHaveHappenedTwiceExactly();
+            A.CallTo(() => _autoFake.Resolve<IRemoteRestoreJobCleaner>().CleanupRemoteRestoreJobByInstanceLabelAsync(A<string>._, A<string>._, A<CancellationToken>._)).MustNotHaveHappened();
         }
 
         #region Test helpers

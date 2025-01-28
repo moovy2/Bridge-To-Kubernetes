@@ -3,10 +3,10 @@
 // Licensed under the MIT license.
 // --------------------------------------------------------------------------------------------
 
-using System.Linq;
+using k8s.Autorest;
 using Microsoft.BridgeToKubernetes.Common;
 using Microsoft.BridgeToKubernetes.Common.Json;
-using Microsoft.Rest;
+using System.Linq;
 
 namespace System.Net.Http
 {
@@ -34,7 +34,7 @@ namespace System.Net.Http
             string content = null;
             try
             {
-                content = request?.Content?.AsString();
+                content = request?.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
             }
             catch { }
 
@@ -46,7 +46,7 @@ namespace System.Net.Http
             string content = null;
             try
             {
-                content = response?.Content?.AsString();
+                content = response?.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
             }
             catch { }
 
@@ -66,7 +66,7 @@ namespace System.Net.Http
 
             if (!response.StatusCode.IsIn(codes))
             {
-                throw new HttpRequestException($"Response code '{(int)response.StatusCode}' is not in the expected list: {JsonHelpers.SerializeObject(codes.Cast<int>())}");
+                throw new HttpRequestException($"Response code '{(int)response.StatusCode}' is not in the expected list: {JsonHelpers.SerializeForLoggingPurpose(codes.Cast<int>())}");
             }
         }
 

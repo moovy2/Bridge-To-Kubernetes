@@ -110,7 +110,7 @@ check_dotnet_runtime_present() {
     fi
     #if dotnet exists, check the version required for b2k and install it.
     dotnetruntimes=$(dotnet --list-runtimes)
-    if [[ -z "${dotnetruntimes}" || ! "${dotnetruntimes}" =~ '3.1'* ]]; then
+    if [[ -z "${dotnetruntimes}" ]] || ! ([[ "${dotnetruntimes}" =~ '7.0'* ]] && [[ "${dotnetruntimes}" =~ 'AspNetCore'* ]]); then
         install_tool dotnet
     else 
         log INFO "dotnet version is $(dotnet --version)"
@@ -123,14 +123,22 @@ install_tool() {
     case $1 in 
 
         kubectl)
+            install_pre_requirements_kubectl
             install_with_sudo kubectl
             ;;
         dotnet)
             if [[ $OSTYPE == "darwin"* ]]; then
-                $PACKAGER tap isen-ng/dotnet-sdk-versions
-                install_with_sudo dotnet-sdk3-1-400 --cask
+                arch=$(uname -m)
+                if [[ "$arch" == 'arm64' ]]; then
+                    install_dotnet_x64_for_arm
+                else 
+                    $PACKAGER tap isen-ng/dotnet-sdk-versions
+                    install_with_sudo dotnet-sdk7-0-300 --cask
+                fi 
+            elif [[ $OSTYPE == "linux"* ]]; then
+                install_with_sudo dotnet-sdk-7.0
             else 
-                install_with_sudo aspnetcore-runtime-3.1
+                install_with_sudo dotnet-7.0-sdk -y
             fi
             ;;
         jq)
@@ -143,11 +151,35 @@ install_tool() {
     esac
 }
 
+install_pre_requirements_kubectl() {
+    if [[ $OSTYPE == "linux"* ]]; then
+        #add google packages to install kubectl or else apt install kubectl will give error kubectl not found.
+        sudo $PACKAGER update
+        sudo $PACKAGER install -y ca-certificates curl
+        sudo $PACKAGER install -y apt-transport-https
+        curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+        sudo $PACKAGER update
+    fi
+}
+
+install_dotnet_x64_for_arm() {
+    log INFO "downloading and installing dotnet x64 binaries in arm machines"
+    curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --version 7.0.306 --arch x64
+    if [[ ! -d /usr/local/share/dotnet ]] || [[ ! -d /usr/local/share/dotnet/x64 ]]; then
+        sudo mkdir -p /usr/local/share/dotnet/x64
+    fi
+    sudo cp -r "$HOME/.dotnet/" /usr/local/share/dotnet/x64/
+    export PATH="/usr/local/share/dotnet/x64/*":$PATH
+}
+
 install_with_sudo() {
     if [[ $OSTYPE == "linux"* ]]; then
         sudo $PACKAGER install $1 -y
-    else
+    elif [[ $OSTYPE == "darwin"* ]]; then
         $PACKAGER install $2 $1
+    else 
+        $PACKAGER install $1 $2
     fi
 }
 
@@ -204,7 +236,7 @@ copy_b2k_files() {
         remove_tmp_dirs $installdir sudo
         sudo cp -r $HOME/tmp/bridgetokubernetes/  $installdir
         sudo chmod -R +x $installdir/dsc $installdir/kubectl $installdir/EndpointManager/EndpointManager
-        create_sym_link $installdir/dsc /usr/local/bin/dsc
+        create_sym_link $installdir/dsc /usr/local/bin/dsc sudo
     fi
     cd ~
     remove_tmp_dirs $HOME/tmp/bridgetokubernetes
@@ -220,11 +252,7 @@ remove_tmp_dirs() {
 create_sym_link() {
     log INFO "creating or overwriting sym link for :$1"
     # ln -sf source destination - creates symlink for dsc command to run from anywhere ex: any folder or location in the file system.
-    if [[ $OSTYPE == "msys"* ]]; then
-        ln -sf $1 $2
-    else 
-        sudo ln -sf $1 $2
-    fi
+    $3 ln -sf $1 $2
 }
 
 install() {
